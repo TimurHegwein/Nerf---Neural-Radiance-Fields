@@ -36,7 +36,7 @@ class NeuroRenderer:
         coords_3d = torch.stack([
             x.flatten(), 
             y.flatten(), 
-            torch.full_as(x.flatten(), z_pos)
+            torch.full_like(x.flatten(), z_pos)
         ], dim=-1).to(self.device)
 
         # 3. Query the Neural Scene (The 'Pickle')

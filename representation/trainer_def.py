@@ -15,7 +15,7 @@ Main Class: NeuroTrainer
 
 import torch
 import torch.nn as nn
-from sampler_def import RaySlabSampler
+from representation.sampler_def import RaySlabSampler
 
 class NeuroTrainer:
     def __init__(self, model, sampler, lr=1e-3):
