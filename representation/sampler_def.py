@@ -1,3 +1,20 @@
+"""
+FILE: sampler_def.py
+API: 2D-TO-3D COORDINATE STRATEGY (SAMPLING INTERFACE)
+-----------------------------------------------------
+Role: 
+    An implementation of the Strategy Pattern to translate 2D pixels into 3D space.
+    Decouples the physics of the MRI scan from the training engine.
+
+Main Classes:
+    - BaseSampler:  Abstract interface for all sampling strategies.
+    - PointSampler: Strategy for high-res 'thin' slices; 1 pixel = 1 3D point.
+    - RaySlabSampler: Strategy for clinical 'thick' slices; 1 pixel = N points 
+                      integrated along a mini-ray (Partial Volume Effect).
+
+Methods:
+    - sample(slice_2d, metadata, batch_size) -> (coords_3d, target_intensities)
+"""
 import torch
 
 class BaseSampler:
