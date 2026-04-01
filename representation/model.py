@@ -1,44 +1,38 @@
-"""
-FILE: representation/model.py
-API: COORDINATE-TO-INTENSITY MAPPING (NEURAL FIELD)
---------------------------------------------------
-Role: 
-    Defines the continuous implicit representation of the volume.
-    Replaces discrete voxels with a differentiable MLP.
-"""
-
 import torch
 import torch.nn as nn
 import numpy as np
 
 class SineEncoding(nn.Module):
-    """Standard NeRF Positional Encoding to capture high-frequency details."""
     def __init__(self, in_features=3, num_frequencies=10):
         super().__init__()
-        self.freqs = 2**torch.linspace(0, num_frequencies - 1, num_frequencies)
+        # Wir registrieren freqs als Buffer, damit es mit .to(device) verschoben wird
+        freqs = 2**torch.linspace(0, num_frequencies - 1, num_frequencies)
+        self.register_buffer('freqs', freqs) 
 
     def forward(self, x):
-        out = []
-        for freq in self.freqs:
-            out.append(torch.sin(x * np.pi * freq))
-            out.append(torch.cos(x * np.pi * freq))
-        return torch.cat(out, dim=-1)
+        # x shape: [Batch, 3]
+        # Wir müssen x für die Multiplikation vorbereiten
+        x_expanded = x.unsqueeze(-1) # [Batch, 3, 1]
+        weighted_coords = x_expanded * np.pi * self.freqs # [Batch, 3, Freqs]
+        
+        sin_coords = torch.sin(weighted_coords)
+        cos_coords = torch.cos(weighted_coords)
+        
+        # Alles flachklatschen für den MLP-Input
+        return torch.cat([sin_coords.flatten(start_dim=1), 
+                          cos_coords.flatten(start_dim=1)], dim=-1)
 
 class NeuralField(nn.Module):
-    """The MLP that represents the 3D volume."""
     def __init__(self, encoding_type="standard", num_freqs=10):
         super().__init__()
         
-        # 1. Setup Encoding
         if encoding_type == "standard":
             self.encoding = SineEncoding(in_features=3, num_frequencies=num_freqs)
-            input_dim = 3 * 2 * num_freqs # 3 coords * (sin+cos) * freqs
+            input_dim = 3 * 2 * num_freqs
         else:
-            # We will implement GridCellEncoding here later for your research!
             self.encoding = nn.Identity() 
             input_dim = 3
 
-        # 2. The Network (The 'Pickle' Weights)
         self.net = nn.Sequential(
             nn.Linear(input_dim, 256),
             nn.ReLU(),
@@ -46,8 +40,8 @@ class NeuralField(nn.Module):
             nn.ReLU(),
             nn.Linear(256, 256),
             nn.ReLU(),
-            nn.Linear(256, 1), # Output: Intensity
-            nn.Sigmoid()       # Constrain output to [0, 1]
+            nn.Linear(256, 1),
+            nn.Sigmoid()
         )
 
     def forward(self, x):

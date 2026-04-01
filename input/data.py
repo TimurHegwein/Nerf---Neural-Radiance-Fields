@@ -133,3 +133,53 @@ class ManualVolumeProvider(BaseVolumeProvider):
             'thickness': thickness
         }
         return slice_data, metadata
+    
+class PhantomProvider(BaseVolumeProvider):
+    """
+    Generates a 3D 'Shepp-Logan' style phantom.
+    Consists of nested ellipsoids representing a skull, brain, and ventricles.
+    """
+    def __init__(self, res=64):
+        self.res = res
+        # 1. Create a 3D coordinate grid [-1, 1]
+        z, y, x = np.ogrid[-1:1:res*1j, -1:1:res*1j, -1:1:res*1j]
+        
+        # 2. Build the volume (nested ellipsoids)
+        # Intensity values: Skull (0.2), Brain (0.5), Ventricles (0.0)
+        
+        # Outer Skull
+        self.volume = (x**2 + (y/1.2)**2 + (z/1.4)**2 < 0.9).astype(np.float32) * 0.2
+        
+        # Brain Matter
+        self.volume += (x**2 + (y/1.1)**2 + (z/1.3)**2 < 0.7).astype(np.float32) * 0.4
+        
+        # Left Ventricle (Hole)
+        self.volume -= ((x-0.3)**2 + (y-0.2)**2 + (z)**2 < 0.05).astype(np.float32) * 0.6
+        
+        # Right Ventricle (Hole)
+        self.volume -= ((x+0.3)**2 + (y-0.2)**2 + (z)**2 < 0.05).astype(np.float32) * 0.6
+        
+        # Add a "Tumor" or specific structure to test high-detail detection
+        self.volume += ((x)**2 + (y+0.4)**2 + (z+0.2)**2 < 0.02).astype(np.float32) * 0.3
+
+        # Clip to ensure intensities stay in [0, 1]
+        self.volume = np.clip(self.volume, 0, 1)
+
+    def get_total_slices(self, axis='z'):
+        return self.res
+
+    def get_slice(self, axis='z', index=0):
+        """Returns a 2D slice and metadata for the trainer."""
+        # Assume Z-axis slicing for standard training
+        slice_data = self.volume[index, :, :]
+        
+        # Calculate normalized position
+        z_pos = -1.0 + (index / (self.res - 1)) * 2.0
+        thickness = 2.0 / self.res
+        
+        metadata = {
+            'z_center': z_pos,
+            'z_range': (z_pos - thickness/2, z_pos + thickness/2),
+            'thickness': thickness
+        }
+        return slice_data, metadata
