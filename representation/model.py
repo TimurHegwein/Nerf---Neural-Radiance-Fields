@@ -23,7 +23,7 @@ class SineEncoding(nn.Module):
                           cos_coords.flatten(start_dim=1)], dim=-1)
 
 class NeuralField(nn.Module):
-    def __init__(self, encoding_type="standard", num_freqs=10):
+    def __init__(self, encoding_type="standard", num_freqs=10, hidden_dim=256, num_layers=4):
         super().__init__()
         
         if encoding_type == "standard":
@@ -33,16 +33,17 @@ class NeuralField(nn.Module):
             self.encoding = nn.Identity() 
             input_dim = 3
 
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1),
-            nn.Sigmoid()
-        )
+        layers = []
+        curr_dim = input_dim
+        for i in range(num_layers):
+            layers.append(nn.Linear(curr_dim, hidden_dim))
+            layers.append(nn.ReLU())
+            curr_dim = hidden_dim
+            
+        layers.append(nn.Linear(hidden_dim, 1))
+        layers.append(nn.Sigmoid())
+        
+        self.net = nn.Sequential(*layers)
 
     def forward(self, x):
         x_encoded = self.encoding(x)
