@@ -1,0 +1,28 @@
+# Python-spezifisch
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# IDEs und Editoren
+.vscode/
+.idea/
+.DS_Store
+
+# Projekt-spezifische Daten (Wichtig!)
+# Wir ignorieren die großen Binärdaten und Checkpoints
+checkpoints/
+*.pth
+*.nii
+*.nii.gz
+nerfstudio_data/
+
+# Logs (TensorBoard)
+runs/
+
+# Distribution / Build
+dist/
+build/
+*.egg-info/
