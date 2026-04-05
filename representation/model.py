@@ -1,3 +1,8 @@
+"""
+This file specifies which deep learning model architecture and which embedding approach is used:
+
+Currently a classic SineEncoding is implemented
+"""
 import torch
 import torch.nn as nn
 import numpy as np
