@@ -1,16 +1,14 @@
 """
-FILE: trainer.py
+FILE: representation/trainer_def.py
 API: NEURAL FIELD CONVERGENCE ENGINE (OPTIMIZER)
 -----------------------------------------------
 Role: 
-    Orchestrates the training loop by connecting the Sampler (Strategy) 
-    to the NeuralField (Model). It is agnostic to the specific physics 
-    used to generate 3D points.
-
-Main Class: NeuroTrainer
-    - Input: NeuralField (The MLP), BaseSampler (The Point/Ray Strategy).
-    - Logic: Minimizes the Mean Squared Error (MSE) between the 
-             reconstructed neural volume and 2D MRI slice data.
+    Orchestrates the training and evaluation steps. Connects the 
+    Sampling Strategy to the Neural Field Model.
+    
+Metrics:
+    - MSE: Mean Squared Error (used for optimization).
+    - PSNR: Peak Signal-to-Noise Ratio (used for human-readable quality).
 """
 
 import torch
@@ -30,38 +28,60 @@ class NeuroTrainer:
         self.optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         self.criterion = nn.MSELoss()
 
+    def calculate_psnr(self, mse):
+        """
+        Calculates Peak Signal-to-Noise Ratio.
+        Formula: 20 * log10(MAX_I / sqrt(MSE))
+        Since our intensities are normalized to [0, 1], MAX_I = 1.0.
+        """
+        if mse == 0:
+            return 100.0  # Perfect reconstruction
+        return -10.0 * torch.log10(mse)
+
     def train_step(self, slice_2d, metadata, batch_size=1024):
         """
-        Executes a single optimization iteration on a provided MRI slice.
-
+        Executes a single optimization iteration (Update loop).
+        Returns: (loss_value, psnr_value)
         """
+        self.model.train()
         self.optimizer.zero_grad()
         
-        # 1. Coordinate Generation
-        # Translate 2D pixel locations into 3D world-space probes.
-        # coords: [Batch * N_Samples, 3], targets: [Batch, 1]
+        # 1. Coordinate Generation & Forward Pass
         coords, targets = self.sampler.sample(slice_2d, metadata, batch_size)
-        
-        # 2. Forward Pass (Inference)
-        # Query the Neural Field for the intensity at each 3D probe location.
         preds = self.model(coords)
         
-        # 3. Volume Integration (Aggregation)
-        # If using Rays, we represent a 'thick' pixel by averaging multiple 
-        # points along the Z-axis. This simulates the 'Partial Volume Effect'.
-        # Reshape from [Batch * N, 1] -> [Batch, N] then mean -> [Batch, 1].
+        # 2. Volume Integration (Aggregation)
         if isinstance(self.sampler, RaySlabSampler):
-            preds = preds.view(batch_size, self.sampler.n_samples).mean(dim=1, keepdim=True)
+            preds = preds.reshape(batch_size, self.sampler.n_samples).mean(dim=1, keepdim=True)
             
-        # 4. Error Calculation & Backpropagation
-        # Compare the integrated Neural Field prediction against the real MRI pixel.
+        # 3. Loss & Backpropagation
         loss = self.criterion(preds, targets)
         loss.backward()
-        
-        # 5. Weights Update
-        # Update the MLP weights to move the 'Neural Scene' closer to the data.
         self.optimizer.step()
         
-        return loss.item()
-    
-    
+        # 4. Metrics
+        psnr = self.calculate_psnr(loss.detach())
+        
+        return loss.item(), psnr.item()
+
+    @torch.no_grad()
+    def eval_step(self, slice_2d, metadata, batch_size=1024):
+        """
+        Evaluates the model on a slice without updating weights.
+        Used for the Validation Set to check generalization.
+        """
+        self.model.eval()
+        
+        # 1. Coordinate Generation & Forward Pass
+        coords, targets = self.sampler.sample(slice_2d, metadata, batch_size)
+        preds = self.model(coords)
+        
+        # 2. Volume Integration (Aggregation)
+        if isinstance(self.sampler, RaySlabSampler):
+            preds = preds.reshape(batch_size, self.sampler.n_samples).mean(dim=1, keepdim=True)
+            
+        # 3. Calculate Metrics
+        loss = self.criterion(preds, targets)
+        psnr = self.calculate_psnr(loss)
+        
+        return loss.item(), psnr.item()
