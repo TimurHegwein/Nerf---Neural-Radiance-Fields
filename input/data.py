@@ -66,43 +66,66 @@ class SyntheticVolumeProvider(BaseVolumeProvider):
         }
         return slice_data, metadata
 
+import nibabel as nib
+import numpy as np
+from typing import Dict, Tuple
+from input.data import BaseVolumeProvider
+
 class NiftiVolumeProvider(BaseVolumeProvider):
     """
-    Loads real neuro-imaging data. Handles normalization and affine mapping.
+    Loads real medical NIfTI data. 
+    Handles orientation standardization, robust normalization, 
+    and affine-aware coordinate mapping.
     """
-    def __init__(self, file_path):
-        # Load NIfTI file (NIfTI stores data in [W, H, D] or [H, W, D])
+    def __init__(self, file_path: str):
+        # 1. Load and force to Canonical Orientation (RAS+)
+        # This ensures that slicing along axis 2 is always 'Superior' (Bottom-to-Top)
         img = nib.load(file_path)
+        img = nib.as_closest_canonical(img)
+        
         data = img.get_fdata().astype(np.float32)
 
-        # 1. Intensity Normalization [0, 1]
-        self.volume = (data - np.min(data)) / (np.max(data) - np.min(data) + 1e-8)
+        # 2. Robust Intensity Normalization
+        # Real MRIs have outliers. We clip the top 0.5% to prevent 'dark' reconstructions.
+        p_low = np.percentile(data, 0.5)
+        p_high = np.percentile(data, 99.5)
+        data = np.clip(data, p_low, p_high)
         
-        # 2. Get geometric info from the NIfTI header (Voxel Spacing)
-        # pixdim[1:4] are usually (dx, dy, dz) in mm
-        self.spacing = img.header.get_zooms()
+        # Scale to [0, 1]
+        self.volume = (data - p_low) / (p_high - p_low + 1e-8)
+        
+        # 3. Noise Floor Removal
+        # MRI 'air' is never perfectly 0. This helps the NeRF ignore background noise.
+        self.volume[self.volume < 0.02] = 0
+        
+        # 4. Geometric Metadata
+        self.spacing = img.header.get_zooms() # (dx, dy, dz) in mm
         self.shape = self.volume.shape
+        print(f"Loaded NIfTI: {self.shape} | Spacing: {self.spacing}")
 
-    def get_total_slices(self, axis='z'):
-        # Usually, axis 'z' is the 3rd dimension in medical data
+    def get_total_slices(self, axis: str = 'z') -> int:
+        # In RAS+ orientation, axis 2 (Z) is the Superior/Inferior axis
         return self.shape[2]
 
-    def get_slice(self, axis='z', index=0):
-        # Assuming Z is the 3rd dimension
+    def get_slice(self, axis: str = 'z', index: int = 0) -> Tuple[np.ndarray, Dict]:
+        """
+        Returns a 2D slice and metadata for the trainer.
+        """
+        # Slice along the Z-axis
         slice_data = self.volume[:, :, index]
         
-        # Calculate normalized Z [-1, 1]
+        # Calculate normalized Z-coordinate in range [-1, 1]
         depth = self.shape[2]
-        z_center = -1.0 + (index / (depth - 1)) * 2.0
+        z_pos = -1.0 + (index / (depth - 1)) * 2.0
         
-        # thickness is based on normalized space relative to total depth
+        # Calculate thickness relative to the normalized [-1, 1] space
         normalized_thickness = 2.0 / depth 
         
         metadata = {
-            'z_center': z_center,
-            'z_range': (z_center - normalized_thickness/2, z_center + normalized_thickness/2),
+            'z_center': z_pos,
+            'z_range': (z_pos - normalized_thickness/2, z_pos + normalized_thickness/2),
             'thickness': normalized_thickness,
-            'real_spacing_mm': self.spacing[2]
+            'mm_spacing': self.spacing[2] # Real physical distance in mm
         }
         return slice_data, metadata
     
