@@ -31,7 +31,8 @@ def run_training(
     val_ratio: float = 0.1,
     save_path: str = "brain_scene.pth", 
     early_stop_threshold: float = 1e-7, 
-    log_dir: str = "runs/neuro_nerf_exp"
+    log_dir: str = "runs/neuro_nerf_exp",
+    cnt_treshold: int = 100
 ) -> nn.Module:
     """
     Orchestrates the training and tracks the BEST model weights based on Validation.
@@ -58,6 +59,9 @@ def run_training(
     best_val_loss = float('inf')
     best_model_state: Optional[Dict] = None
     start_time = time.time()
+
+    # Counting runs without model improvement for early stoppage
+    cnt = 0
 
     try:
         for epoch in range(epochs):
@@ -95,6 +99,9 @@ def run_training(
             if avg_val_loss < best_val_loss:
                 best_val_loss = avg_val_loss
                 best_model_state = copy.deepcopy(trainer.model.state_dict())
+                cnt = 0
+            else:
+                cnt += 1
 
             # --- LOGGING TO CONSOLE ---
             if (epoch + 1) % 10 == 0 or epoch == 0:
@@ -102,7 +109,7 @@ def run_training(
                 print(f"Ep [{epoch+1:04d}/{epochs}] | Train PSNR: {avg_train_psnr:.2f}dB | Val PSNR: {avg_val_psnr:.2f}dB | Best Val Loss: {best_val_loss:.8f}")
 
             # --- EARLY STOPPING ---
-            if avg_val_loss < early_stop_threshold:
+            if avg_val_loss < early_stop_threshold or cnt > cnt_treshold:
                 print(f"\n[EARLY STOP] Epoch {epoch+1}: Val Loss {avg_val_loss:.8f} < {early_stop_threshold}")
                 break
 

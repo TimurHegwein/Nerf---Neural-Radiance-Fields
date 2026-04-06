@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import os
 
 # Imports basierend auf deiner Verzeichnisstruktur
-from input.data import PhantomProvider
+from input.data import PhantomProvider, NiftiVolumeProvider
 from representation.model import NeuralField
 from representation.sampler_def import RaySlabSampler
 from representation.trainer_def import NeuroTrainer
@@ -25,11 +25,12 @@ def main() -> None:
 
     # 1. DATA: Erzeugt das 3D-Phantom (Skull, Brain, Ventricles, Tumor)
     # res=64 erzeugt ein Volumen von 64^3 Voxeln
-    provider = PhantomProvider(res=64)
+    # provider = PhantomProvider(res=64)
+    provider = NiftiVolumeProvider("brains/brain_0.nii.gz")
 
     # 2. MODEL: Definition der Neural Scene
     # 12 Frequenzen erlauben es, scharfe Kanten (Skull/Tumor) zu lernen
-    model = NeuralField(encoding_type="standard", num_freqs=12).to(device)
+    model = NeuralField(encoding_type="standard", num_freqs=14, hidden_dim=512).to(device)
     
     # 3. SAMPLER & TRAINER
     # RaySlabSampler simuliert die Schichtdicke für physikalisch korrekte 3D-Interpolation
@@ -44,8 +45,8 @@ def main() -> None:
     model = run_training(
         volume_provider=provider, 
         trainer=trainer, 
-        epochs=1000, 
-        batch_size=2048, 
+        epochs=1200, 
+        batch_size=8192, 
         val_ratio=0.1,
         save_path="checkpoints/phantom_brain.pth",
         log_dir="runs/phantom_experiment"
