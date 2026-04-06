@@ -7,8 +7,9 @@ Role:
     Splits data into Training and Validation sets to monitor 3D generalization.
     Manages the lifecycle of the training process, including:
     - Best Model Checkpointing (Saving weights with minimum Validation Loss).
-    - TensorBoard Logging (Loss and PSNR curves).
-    - Early Stopping based on Validation performance.
+    - TensorBoard Logging (Loss, PSNR, and Learning Rate curves).
+    - Early Stopping based on Validation performance or lack of improvement.
+    - Learning Rate Scheduling (Annealing).
 """
 
 import torch
@@ -19,7 +20,7 @@ import numpy as np
 from typing import List, Tuple, Dict, Optional
 from torch.utils.tensorboard import SummaryWriter
 
-# Import-Typen für Type Hinting
+# Import types for type hinting
 from input.data import BaseVolumeProvider
 from representation.trainer_def import NeuroTrainer
 
@@ -37,7 +38,8 @@ def run_training(
     """
     Orchestrates the training and tracks the BEST model weights based on Validation.
     
-    :param val_ratio: Fraction of slices to hold out for validation (e.g., 0.1 for 10%).
+    :param val_ratio: Fraction of slices to hold out for validation.
+    :param cnt_treshold: Patience counter for early stopping (epochs without improvement).
     :return: The trained NeuralField model with optimized weights.
     """
     
@@ -45,7 +47,6 @@ def run_training(
     writer = SummaryWriter(log_dir=log_dir)
     
     # 2. Data Splitting (Train/Val Split)
-    # Wir nehmen jeden n-ten Slice für die Validierung, um die Interpolation zu prüfen
     total_slices = volume_provider.get_total_slices()
     val_step = int(1 / val_ratio) if val_ratio > 0 else total_slices + 1
     
@@ -60,7 +61,7 @@ def run_training(
     best_model_state: Optional[Dict] = None
     start_time = time.time()
 
-    # Counting runs without model improvement for early stoppage
+    # Patience counter for early stopping
     cnt = 0
 
     try:
@@ -90,12 +91,16 @@ def run_training(
             else:
                 avg_val_loss, avg_val_psnr = avg_train_loss, avg_train_psnr
 
+            # --- SCHEDULER STEP ---
+            # Update the learning rate at the end of each epoch
+            current_lr = trainer.step_scheduler()
+
             # --- TENSORBOARD LOGGING ---
-            # Wir gruppieren Train und Val in einem Graphen für direkten Vergleich
             writer.add_scalars('Loss/Combined', {'train': avg_train_loss, 'val': avg_val_loss}, epoch)
             writer.add_scalars('PSNR/Combined', {'train': avg_train_psnr, 'val': avg_val_psnr}, epoch)
+            writer.add_scalar('Params/LearningRate', current_lr, epoch)
 
-            # --- CHECKPOINT LOGIC (Always based on Validation) ---
+            # --- CHECKPOINT LOGIC (Based on Validation) ---
             if avg_val_loss < best_val_loss:
                 best_val_loss = avg_val_loss
                 best_model_state = copy.deepcopy(trainer.model.state_dict())
@@ -106,11 +111,15 @@ def run_training(
             # --- LOGGING TO CONSOLE ---
             if (epoch + 1) % 10 == 0 or epoch == 0:
                 elapsed = time.time() - start_time
-                print(f"Ep [{epoch+1:04d}/{epochs}] | Train PSNR: {avg_train_psnr:.2f}dB | Val PSNR: {avg_val_psnr:.2f}dB | Best Val Loss: {best_val_loss:.8f}")
+                print(f"Ep [{epoch+1:04d}/{epochs}] | Train PSNR: {avg_train_psnr:.2f}dB | Val PSNR: {avg_val_psnr:.2f}dB | LR: {current_lr:.6f} | Patience: {cnt}/{cnt_treshold}")
 
             # --- EARLY STOPPING ---
-            if avg_val_loss < early_stop_threshold or cnt > cnt_treshold:
-                print(f"\n[EARLY STOP] Epoch {epoch+1}: Val Loss {avg_val_loss:.8f} < {early_stop_threshold}")
+            if avg_val_loss < early_stop_threshold:
+                print(f"\n[EARLY STOP] Threshold reached at Epoch {epoch+1}")
+                break
+            
+            if cnt > cnt_treshold:
+                print(f"\n[EARLY STOP] No improvement for {cnt_treshold} epochs.")
                 break
 
     except KeyboardInterrupt:
@@ -120,7 +129,7 @@ def run_training(
     if best_model_state is not None:
         trainer.model.load_state_dict(best_model_state)
         torch.save(best_model_state, save_path)
-        print(f"Final: Best model saved to {save_path} (Val Loss: {best_val_loss:.8f})")
+        print(f"Final: Best model saved to {save_path} (Best Val Loss: {best_val_loss:.8f})")
     else:
         torch.save(trainer.model.state_dict(), save_path)
         print(f"Final: Last model state saved to {save_path}")

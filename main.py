@@ -48,8 +48,8 @@ def main() -> None:
         epochs=1200, 
         batch_size=8192, 
         val_ratio=0.1,
-        save_path="checkpoints/phantom_brain.pth",
-        log_dir="runs/phantom_experiment"
+        save_path="checkpoints/brain_0.pth",
+        log_dir="runs/brain_0_experiment"
     )
 
     # 5. RENDER & COMPARISON: Das Kernstück der Evaluation
