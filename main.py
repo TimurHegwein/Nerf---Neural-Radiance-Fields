@@ -26,7 +26,7 @@ def main() -> None:
     # 1. DATA: Erzeugt das 3D-Phantom (Skull, Brain, Ventricles, Tumor)
     # res=64 erzeugt ein Volumen von 64^3 Voxeln
     # provider = PhantomProvider(res=64)
-    provider = NiftiVolumeProvider("brains/brain_0.nii.gz")
+    provider = NiftiVolumeProvider("brains/brain_0.nii.gz", device=device)
 
     # 2. MODEL: Definition der Neural Scene
     # 12 Frequenzen erlauben es, scharfe Kanten (Skull/Tumor) zu lernen

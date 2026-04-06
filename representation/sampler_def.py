@@ -22,9 +22,7 @@ class PointSampler(BaseSampler):
         self.device = device
 
     def sample(self, slice_2d, metadata, batch_size):
-        if isinstance(slice_2d, np.ndarray):
-            slice_2d = torch.from_numpy(slice_2d).to(self.device)
-            
+        slice_2d = torch.as_tensor(slice_2d, device=self.device) 
         # 1. Stochastic Pixel Selection
         # We sample random indices to break spatial correlation during training.
         idx_h = torch.randint(0, slice_2d.shape[0], (batch_size,), device=self.device)
@@ -63,9 +61,8 @@ class RaySlabSampler(BaseSampler):
         self.device = device
 
     def sample(self, slice_2d, metadata, batch_size):
-        if isinstance(slice_2d, np.ndarray):
-            slice_2d = torch.from_numpy(slice_2d).to(self.device)
-        
+        slice_2d = torch.as_tensor(slice_2d, device=self.device)
+
         # 1. Stochastic Ray Selection
         idx_h = torch.randint(0, slice_2d.shape[0], (batch_size,), device=self.device)
         idx_w = torch.randint(0, slice_2d.shape[1], (batch_size,), device=self.device)
