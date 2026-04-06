@@ -30,7 +30,7 @@ def main() -> None:
 
     # 2. MODEL: Definition der Neural Scene
     # 12 Frequenzen erlauben es, scharfe Kanten (Skull/Tumor) zu lernen
-    model = NeuralField(encoding_type="standard", num_freqs=14, hidden_dim=512).to(device)
+    model = NeuralField(encoding_type="standard", num_freqs=12, hidden_dim=512, num_layers=4).to(device)
     
     # 3. SAMPLER & TRAINER
     # RaySlabSampler simuliert die Schichtdicke für physikalisch korrekte 3D-Interpolation
@@ -45,7 +45,7 @@ def main() -> None:
     model = run_training(
         volume_provider=provider, 
         trainer=trainer, 
-        epochs=1200, 
+        epochs=500, 
         batch_size=8192, 
         val_ratio=0.1,
         save_path="checkpoints/brain_0.pth",
