@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+import random
 
 # Imports basierend auf deiner Verzeichnisstruktur
 from input.data import PhantomProvider, NiftiVolumeProvider
@@ -11,7 +12,20 @@ from representation.trainer_def import NeuroTrainer
 from representation.train_loop import run_training
 from output.renderer import NeuroRenderer
 
+SEED = 42
+
+def set_seed(seed: int) -> None:
+    """Seed Python, NumPy and Torch RNGs for reproducibility.
+    Note: MPS does not yet guarantee full determinism."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
 def main() -> None:
+    set_seed(SEED)
+
     # 0. Device Setup
     if torch.backends.mps.is_available():
         device = torch.device("mps")
@@ -19,8 +33,8 @@ def main() -> None:
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
-    
-    print(f"Running on: {device}")
+
+    print(f"Running on: {device} | seed={SEED}")
     os.makedirs("checkpoints", exist_ok=True)
 
     # 1. DATA: Erzeugt das 3D-Phantom (Skull, Brain, Ventricles, Tumor)
@@ -31,11 +45,11 @@ def main() -> None:
     # 2. MODEL: Definition der Neural Scene
     # 12 Frequenzen erlauben es, scharfe Kanten (Skull/Tumor) zu lernen
     model = NeuralField(encoding_type="standard", num_freqs=12, hidden_dim=512, num_layers=4).to(device)
-    
+
     # 3. SAMPLER & TRAINER
     # RaySlabSampler simuliert die Schichtdicke für physikalisch korrekte 3D-Interpolation
     sampler = RaySlabSampler(num_samples_per_ray=8, device=device)
-    
+
     # tv_weight sorgt dafür, dass die Ventrikel und das Gewebe glatt bleiben
     trainer = NeuroTrainer(model, sampler, lr=1e-3, tv_weight=1e-6)
 
@@ -43,20 +57,21 @@ def main() -> None:
     # Wir nutzen 10% der Slices zur Validierung (Generalization Check)
     print("Starting Training Loop...")
     model = run_training(
-        volume_provider=provider, 
-        trainer=trainer, 
-        epochs=500, 
-        batch_size=8192, 
+        volume_provider=provider,
+        trainer=trainer,
+        epochs=500,
+        batch_size=8192,
         val_ratio=0.1,
         save_path="checkpoints/brain_0.pth",
-        log_dir="runs/brain_0_experiment"
+        log_dir="runs/brain_0_experiment",
+        split_seed=SEED,
     )
 
     # 5. RENDER & COMPARISON: Das Kernstück der Evaluation
     print("\nGenerating Analysis Dashboard...")
     renderer = NeuroRenderer(model, device=device)
-    
-    # plot_comparison zeigt uns: 
+
+    # plot_comparison zeigt uns:
     # 1. Was das Modell gesehen hat (GT)
     # 2. Wie gut es das gelernte rekonstruiert (Recon)
     # 3. Wie gut es die Lücken dazwischen füllt (Interpolation)
@@ -71,7 +86,7 @@ def main() -> None:
         plt.imshow(img, cmap='bone', vmin=0, vmax=1)
         plt.title(f"Z={z:.2f}")
         plt.axis('off')
-    
+
     plt.suptitle("Neural Field: Latent Brain Representation (Continuous Slicing)")
     plt.show()
 

@@ -28,6 +28,14 @@ class NeuralField(nn.Module):
                  hidden_dim: int = 512, num_layers: int = 8):
         super().__init__()
 
+        # Persist hyperparameters so checkpoints can rebuild the same architecture.
+        self.config = {
+            "encoding_type": encoding_type,
+            "num_freqs": num_freqs,
+            "hidden_dim": hidden_dim,
+            "num_layers": num_layers,
+        }
+
         # 1. Encoding
         if encoding_type == "standard":
             self.encoder = SineEncoding(in_features=3, num_frequencies=num_freqs)

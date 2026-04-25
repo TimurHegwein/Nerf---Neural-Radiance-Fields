@@ -2,7 +2,7 @@
 FILE: representation/train_loop.py
 API: TRAINING ORCHESTRATION & MONITORING
 ---------------------------------------
-Role: 
+Role:
     Iterates through the VolumeProvider to feed slices into the NeuroTrainer.
     Splits data into Training and Validation sets to monitor 3D generalization.
     Manages the lifecycle of the training process, including:
@@ -17,51 +17,58 @@ import torch.nn as nn
 import time
 import copy
 import numpy as np
-from typing import List, Tuple, Dict, Optional
+from typing import Dict, Optional
 from torch.utils.tensorboard import SummaryWriter
 
-# Import types for type hinting
 from input.data import BaseVolumeProvider
 from representation.trainer_def import NeuroTrainer
 
+
+def _split_indices(total: int, val_ratio: float, seed: int):
+    """Random shuffle split with a fixed seed. Indices are sorted within each set
+    so iteration order is stable across runs."""
+    if val_ratio <= 0:
+        return list(range(total)), []
+    rng = np.random.default_rng(seed)
+    perm = rng.permutation(total)
+    n_val = max(1, int(round(total * val_ratio)))
+    val_idx = sorted(perm[:n_val].tolist())
+    train_idx = sorted(perm[n_val:].tolist())
+    return train_idx, val_idx
+
+
 def run_training(
-    volume_provider: BaseVolumeProvider, 
-    trainer: NeuroTrainer, 
-    epochs: int = 2000, 
-    batch_size: int = 1024, 
+    volume_provider: BaseVolumeProvider,
+    trainer: NeuroTrainer,
+    epochs: int = 2000,
+    batch_size: int = 1024,
     val_ratio: float = 0.1,
-    save_path: str = "brain_scene.pth", 
-    early_stop_threshold: float = 1e-7, 
+    save_path: str = "brain_scene.pth",
+    early_stop_threshold: float = 1e-7,
     log_dir: str = "runs/neuro_nerf_exp",
-    cnt_treshold: int = 100
+    cnt_treshold: int = 100,
+    split_seed: int = 42,
 ) -> nn.Module:
     """
     Orchestrates the training and tracks the BEST model weights based on Validation.
-    
+
     :param val_ratio: Fraction of slices to hold out for validation.
-    :param cnt_treshold: Patience counter for early stopping (epochs without improvement).
+    :param cnt_treshold: Patience counter for early stopping.
+    :param split_seed: Seed for the random train/val split.
     :return: The trained NeuralField model with optimized weights.
     """
-    
-    # 1. Initialize TensorBoard Writer
     writer = SummaryWriter(log_dir=log_dir)
-    
-    # 2. Data Splitting (Train/Val Split)
+
     total_slices = volume_provider.get_total_slices()
-    val_step = int(1 / val_ratio) if val_ratio > 0 else total_slices + 1
-    
-    val_indices = list(range(0, total_slices, val_step))
-    train_indices = [i for i in range(total_slices) if i not in val_indices]
-    
-    print(f"Starting Training: {len(train_indices)} Train-Slices, {len(val_indices)} Val-Slices")
+    train_indices, val_indices = _split_indices(total_slices, val_ratio, split_seed)
+
+    print(f"Starting Training: {len(train_indices)} Train-Slices, {len(val_indices)} Val-Slices (seed={split_seed})")
     print(f"Logging to: {log_dir}")
-    
-    # --- BEST MODEL TRACKING ---
+
     best_val_loss = float('inf')
     best_model_state: Optional[Dict] = None
+    best_epoch = 0
     start_time = time.time()
-
-    # Patience counter for early stopping
     cnt = 0
 
     try:
@@ -85,39 +92,33 @@ def run_training(
                     v_loss, v_psnr = trainer.eval_step(slice_2d, metadata, batch_size=batch_size)
                     epoch_val_loss += v_loss
                     epoch_val_psnr += v_psnr
-                
+
                 avg_val_loss = epoch_val_loss / len(val_indices)
                 avg_val_psnr = epoch_val_psnr / len(val_indices)
             else:
                 avg_val_loss, avg_val_psnr = avg_train_loss, avg_train_psnr
 
-            # --- SCHEDULER STEP ---
-            # Update the learning rate at the end of each epoch
             current_lr = trainer.step_scheduler()
 
-            # --- TENSORBOARD LOGGING ---
             writer.add_scalars('Loss/Combined', {'train': avg_train_loss, 'val': avg_val_loss}, epoch)
             writer.add_scalars('PSNR/Combined', {'train': avg_train_psnr, 'val': avg_val_psnr}, epoch)
             writer.add_scalar('Params/LearningRate', current_lr, epoch)
 
-            # --- CHECKPOINT LOGIC (Based on Validation) ---
             if avg_val_loss < best_val_loss:
                 best_val_loss = avg_val_loss
                 best_model_state = copy.deepcopy(trainer.model.state_dict())
+                best_epoch = epoch
                 cnt = 0
             else:
                 cnt += 1
 
-            # --- LOGGING TO CONSOLE ---
             if (epoch + 1) % 10 == 0 or epoch == 0:
-                elapsed = time.time() - start_time
                 print(f"Ep [{epoch+1:04d}/{epochs}] | Train PSNR: {avg_train_psnr:.2f}dB | Val PSNR: {avg_val_psnr:.2f}dB | LR: {current_lr:.6f} | Patience: {cnt}/{cnt_treshold}")
 
-            # --- EARLY STOPPING ---
             if avg_val_loss < early_stop_threshold:
                 print(f"\n[EARLY STOP] Threshold reached at Epoch {epoch+1}")
                 break
-            
+
             if cnt > cnt_treshold:
                 print(f"\n[EARLY STOP] No improvement for {cnt_treshold} epochs.")
                 break
@@ -125,14 +126,28 @@ def run_training(
     except KeyboardInterrupt:
         print("\nTraining interrupted by user. Saving best model found so far...")
 
-    # --- FINALIZATION ---
+    # --- FINALIZATION: save state_dict + config so the model is reproducible. ---
+    config = getattr(trainer.model, "config", None)
     if best_model_state is not None:
         trainer.model.load_state_dict(best_model_state)
-        torch.save(best_model_state, save_path)
-        print(f"Final: Best model saved to {save_path} (Best Val Loss: {best_val_loss:.8f})")
+        payload = {
+            "state_dict": best_model_state,
+            "config": config,
+            "best_val_loss": best_val_loss,
+            "best_epoch": best_epoch,
+            "split_seed": split_seed,
+            "val_indices": val_indices,
+        }
+        torch.save(payload, save_path)
+        print(f"Final: Best model saved to {save_path} (Best Val Loss: {best_val_loss:.8f} @ epoch {best_epoch+1})")
     else:
-        torch.save(trainer.model.state_dict(), save_path)
+        payload = {
+            "state_dict": trainer.model.state_dict(),
+            "config": config,
+            "split_seed": split_seed,
+        }
+        torch.save(payload, save_path)
         print(f"Final: Last model state saved to {save_path}")
-    
+
     writer.close()
     return trainer.model
