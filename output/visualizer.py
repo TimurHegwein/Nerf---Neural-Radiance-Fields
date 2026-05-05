@@ -3,17 +3,16 @@ FILE: output/visualizer.py
 API: 3D MESH EXTRACTION & INTERACTIVE VIEWING
 ---------------------------------------------
 Role:
-    Converts the implicit 'Neural Scene' (Pickle) into an explicit 3D Mesh.
-    Uses the Marching Cubes algorithm to find the surface boundary.
+    Converts the implicit 'Neural Scene' into an explicit 3D Mesh via
+    Marching Cubes, then renders it as an interactive Plotly figure
+    (rotate / zoom / pan with the mouse, inline in Jupyter/Colab).
 
 Input:  .pth file containing the trained NeuralField weights and config.
-Output: An interactive 3D window showing the reconstructed geometry.
+Output: Interactive Plotly Mesh3d figure.
 """
 
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from skimage import measure
 
 from representation.model import NeuralField
@@ -33,7 +32,6 @@ def load_neural_field(model_path: str, device: str = "cpu") -> NeuralField:
         model = NeuralField(**config)
         model.load_state_dict(ckpt["state_dict"])
     else:
-        # Legacy: bare state_dict with no config metadata.
         model = NeuralField()
         model.load_state_dict(ckpt)
 
@@ -43,12 +41,13 @@ def load_neural_field(model_path: str, device: str = "cpu") -> NeuralField:
 
 
 class NeuroVisualizer:
-    def __init__(self, model_path, device="cpu"):
+    def __init__(self, model_path: str, device: str = "cpu"):
         self.device = device
         self.model = load_neural_field(model_path, device=device)
 
     @torch.no_grad()
-    def extract_mesh(self, resolution=64, threshold=0.5):
+    def extract_mesh(self, resolution: int = 64, threshold: float = 0.5):
+        """Sample the implicit field on a dense grid and run Marching Cubes."""
         print(f"Sampling 3D grid at {resolution}^3 resolution...")
 
         grid_coords = torch.linspace(-1, 1, resolution, device=self.device)
@@ -56,7 +55,7 @@ class NeuroVisualizer:
         coords_3d = torch.stack([x.flatten(), y.flatten(), z.flatten()], dim=-1)
 
         intensities = []
-        chunk_size = 64**2
+        chunk_size = resolution ** 2  # one slice per chunk to keep memory bounded
         for i in range(0, coords_3d.shape[0], chunk_size):
             chunk = coords_3d[i : i + chunk_size]
             intensities.append(self.model(chunk))
@@ -64,29 +63,51 @@ class NeuroVisualizer:
         volume = torch.cat(intensities).reshape(resolution, resolution, resolution).cpu().numpy()
 
         print("Running Marching Cubes...")
-        verts, faces, normals, values = measure.marching_cubes(volume, level=threshold)
+        verts, faces, _, _ = measure.marching_cubes(volume, level=threshold)
+        # Scale vertices from voxel grid back to [-1, 1] world coordinates.
         verts = (verts / (resolution - 1)) * 2 - 1
         return verts, faces
 
-    def show(self, resolution=64, threshold=0.5):
+    def show(self, resolution: int = 64, threshold: float = 0.5,
+             color: str = "lightblue", opacity: float = 0.85):
+        """Render the mesh as an interactive Plotly figure.
+
+        On Jupyter/Colab the figure is shown inline and is fully rotatable.
+        Outside notebooks (plain `python visualizer.py`) it opens in the
+        default browser via fig.show().
+        """
+        try:
+            import plotly.graph_objects as go
+        except ImportError as e:
+            raise ImportError(
+                "plotly is required for the 3D viewer — install with `pip install plotly`."
+            ) from e
+
         verts, faces = self.extract_mesh(resolution, threshold)
+        x, y, z = verts.T
+        i, j, k = faces.T
 
-        fig = plt.figure(figsize=(10, 10))
-        ax = fig.add_subplot(111, projection='3d')
-
-        mesh = Poly3DCollection(verts[faces], alpha=0.7)
-        mesh.set_facecolor([0.5, 0.5, 1.0])
-        mesh.set_edgecolor('black')
-        mesh.set_linewidth(0.1)
-        ax.add_collection3d(mesh)
-
-        ax.set_xlim(-1, 1)
-        ax.set_ylim(-1, 1)
-        ax.set_zlim(-1, 1)
-        ax.set_title(f"3D Neural Field Reconstruction (Threshold: {threshold})")
-
-        print("Opening 3D Viewer...")
-        plt.show()
+        fig = go.Figure(data=[go.Mesh3d(
+            x=x, y=y, z=z, i=i, j=j, k=k,
+            color=color, opacity=opacity,
+            flatshading=True,
+            lighting=dict(ambient=0.4, diffuse=0.8, specular=0.3, roughness=0.5),
+            lightposition=dict(x=100, y=200, z=150),
+            name="brain",
+        )])
+        fig.update_layout(
+            title=f"3D Neural Field Reconstruction (threshold={threshold}, res={resolution})",
+            scene=dict(
+                xaxis=dict(range=[-1, 1], title="x"),
+                yaxis=dict(range=[-1, 1], title="y"),
+                zaxis=dict(range=[-1, 1], title="z"),
+                aspectmode="cube",
+            ),
+            margin=dict(l=0, r=0, t=40, b=0),
+            width=800, height=800,
+        )
+        fig.show()
+        return fig
 
 
 if __name__ == "__main__":

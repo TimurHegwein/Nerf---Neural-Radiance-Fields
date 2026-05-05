@@ -50,6 +50,18 @@ def _split_indices(total: int, val_ratio: float, seed: int):
     return train_idx, val_idx
 
 
+def _save_checkpoint(path: str, model: nn.Module, state_dict: Dict, best_val_loss: float,
+                     best_epoch: int, split_seed: int, val_indices) -> None:
+    """Save best-so-far state with full reproducibility metadata."""
+    torch.save({
+        "state_dict": state_dict,
+        "config": getattr(model, "config", None),
+        "best_val_loss": best_val_loss,
+        "best_epoch": best_epoch,
+        "split_seed": split_seed,
+        "val_indices": val_indices,
+    }, path)
+
 def run_training(
     volume_provider: BaseVolumeProvider,
     trainer: NeuroTrainer,
@@ -61,6 +73,7 @@ def run_training(
     log_dir: str = "runs/neuro_nerf_exp",
     cnt_treshold: int = 100,
     split_seed: int = 42,
+    ckpt_every_n_epochs: int = 25,
 ) -> nn.Module:
     """
     Orchestrates the training and tracks the BEST model weights based on Validation.
@@ -81,6 +94,7 @@ def run_training(
     best_val_loss = float('inf')
     best_model_state: Optional[Dict] = None
     best_epoch = 0
+    pending_save = False  # True iff in-memory best is newer than the file on disk
     start_time = time.time()
     cnt = 0
 
@@ -122,8 +136,15 @@ def run_training(
                 best_model_state = copy.deepcopy(trainer.model.state_dict())
                 best_epoch = epoch
                 cnt = 0
+                pending_save = True
             else:
                 cnt += 1
+
+            # Periodic flush so a session crash never wipes more than ckpt_every_n_epochs of progress.
+            if pending_save and (epoch + 1) % ckpt_every_n_epochs == 0 and best_model_state is not None:
+                _save_checkpoint(save_path, trainer.model, best_model_state,
+                                 best_val_loss, best_epoch, split_seed, val_indices)
+                pending_save = False
 
             if (epoch + 1) % 10 == 0 or epoch == 0:
                 print(f"Ep [{epoch+1:04d}/{epochs}] | Train PSNR: {avg_train_psnr:.2f}dB | Val PSNR: {avg_val_psnr:.2f}dB | LR: {current_lr:.6f} | Patience: {cnt}/{cnt_treshold}")
@@ -140,26 +161,14 @@ def run_training(
         print("\nTraining interrupted by user. Saving best model found so far...")
 
     # --- FINALIZATION: save state_dict + config so the model is reproducible. ---
-    config = getattr(trainer.model, "config", None)
     if best_model_state is not None:
         trainer.model.load_state_dict(best_model_state)
-        payload = {
-            "state_dict": best_model_state,
-            "config": config,
-            "best_val_loss": best_val_loss,
-            "best_epoch": best_epoch,
-            "split_seed": split_seed,
-            "val_indices": val_indices,
-        }
-        torch.save(payload, save_path)
+        _save_checkpoint(save_path, trainer.model, best_model_state,
+                         best_val_loss, best_epoch, split_seed, val_indices)
         print(f"Final: Best model saved to {save_path} (Best Val Loss: {best_val_loss:.8f} @ epoch {best_epoch+1})")
     else:
-        payload = {
-            "state_dict": trainer.model.state_dict(),
-            "config": config,
-            "split_seed": split_seed,
-        }
-        torch.save(payload, save_path)
+        _save_checkpoint(save_path, trainer.model, trainer.model.state_dict(),
+                         best_val_loss, best_epoch, split_seed, val_indices)
         print(f"Final: Last model state saved to {save_path}")
 
     writer.close()
