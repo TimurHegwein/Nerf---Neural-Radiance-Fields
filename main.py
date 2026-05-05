@@ -44,14 +44,14 @@ def main() -> None:
 
     # 2. MODEL: Definition der Neural Scene
     # 12 Frequenzen erlauben es, scharfe Kanten (Skull/Tumor) zu lernen
-    model = NeuralField(encoding_type="standard", num_freqs=12, hidden_dim=512, num_layers=4).to(device)
+    model = NeuralField(encoding_type="standard", num_freqs=12, hidden_dim=512, num_layers=6).to(device)
 
     # 3. SAMPLER & TRAINER
     # RaySlabSampler simuliert die Schichtdicke für physikalisch korrekte 3D-Interpolation
     sampler = RaySlabSampler(num_samples_per_ray=8, device=device)
 
     # tv_weight sorgt dafür, dass die Ventrikel und das Gewebe glatt bleiben
-    trainer = NeuroTrainer(model, sampler, lr=1e-3, tv_weight=1e-6)
+    trainer = NeuroTrainer(model, sampler, lr=2e-3, tv_weight=1e-7)
 
     # 4. TRAINING: Startet die optimierte Loop
     # Wir nutzen 10% der Slices zur Validierung (Generalization Check)

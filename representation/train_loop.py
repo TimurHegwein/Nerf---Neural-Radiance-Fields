@@ -25,15 +25,28 @@ from representation.trainer_def import NeuroTrainer
 
 
 def _split_indices(total: int, val_ratio: float, seed: int):
-    """Random shuffle split with a fixed seed. Indices are sorted within each set
-    so iteration order is stable across runs."""
+    """Stratified split: divides slices into N equally-sized bins along Z and
+    samples one validation slice per bin. This guarantees uniform coverage of
+    the volume (no clustered val regions) while staying random within bins.
+    Reproducible via the given seed."""
     if val_ratio <= 0:
         return list(range(total)), []
-    rng = np.random.default_rng(seed)
-    perm = rng.permutation(total)
+
     n_val = max(1, int(round(total * val_ratio)))
-    val_idx = sorted(perm[:n_val].tolist())
-    train_idx = sorted(perm[n_val:].tolist())
+    rng = np.random.default_rng(seed)
+
+    # Bin edges split the index range into n_val contiguous chunks.
+    edges = np.linspace(0, total, n_val + 1, dtype=int)
+    val_idx = []
+    for i in range(n_val):
+        lo, hi = edges[i], edges[i + 1]
+        if hi <= lo:  # degenerate bin (more bins than slices) — skip
+            continue
+        val_idx.append(int(rng.integers(lo, hi)))
+
+    val_set = set(val_idx)
+    val_idx = sorted(val_set)
+    train_idx = [i for i in range(total) if i not in val_set]
     return train_idx, val_idx
 
 
