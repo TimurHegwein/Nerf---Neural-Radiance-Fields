@@ -74,6 +74,7 @@ def run_training(
     cnt_treshold: int = 100,
     split_seed: int = 42,
     ckpt_every_n_epochs: int = 25,
+    slices_per_step: int = 10,
 ) -> nn.Module:
     """
     Orchestrates the training and tracks the BEST model weights based on Validation.
@@ -100,16 +101,25 @@ def run_training(
 
     try:
         for epoch in range(epochs):
-            # --- TRAINING PHASE ---
-            epoch_train_loss, epoch_train_psnr = 0.0, 0.0
-            for slice_idx in train_indices:
-                slice_2d, metadata = volume_provider.get_slice(axis='z', index=slice_idx)
-                loss, psnr = trainer.train_step(slice_2d, metadata, batch_size=batch_size)
+            # --- TRAINING PHASE (multi-slice batching) ---
+            # Reshuffle order each epoch so chunks see different slice combinations.
+            order = list(train_indices)
+            np.random.shuffle(order)
+
+            epoch_train_loss, epoch_train_psnr, n_steps = 0.0, 0.0, 0
+            for start in range(0, len(order), slices_per_step):
+                chunk = order[start : start + slices_per_step]
+                slices_with_meta = [
+                    volume_provider.get_slice(axis='z', index=idx) for idx in chunk
+                ]
+                loss, psnr = trainer.train_step_multi(slices_with_meta,
+                                                      rays_per_slice=batch_size)
                 epoch_train_loss += loss
                 epoch_train_psnr += psnr
+                n_steps += 1
 
-            avg_train_loss = epoch_train_loss / len(train_indices)
-            avg_train_psnr = epoch_train_psnr / len(train_indices)
+            avg_train_loss = epoch_train_loss / max(n_steps, 1)
+            avg_train_psnr = epoch_train_psnr / max(n_steps, 1)
 
             # --- VALIDATION PHASE ---
             epoch_val_loss, epoch_val_psnr = 0.0, 0.0

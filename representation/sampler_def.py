@@ -49,6 +49,18 @@ class PointSampler(BaseSampler):
         targets = slice_2d[idx_h, idx_w].unsqueeze(-1)
         return coords, targets
 
+    def sample_multi(self, slices_with_metadata, rays_per_slice):
+        """Concatenate samples from K slices into one (coords, targets) pair.
+        Lets the trainer push K * rays_per_slice points through the model in a
+        single forward/backward — much fewer GPU kernel launches than calling
+        sample() K times and training K separately.
+        """
+        all_c, all_t = [], []
+        for slice_2d, meta in slices_with_metadata:
+            c, t = self.sample(slice_2d, meta, rays_per_slice)
+            all_c.append(c); all_t.append(t)
+        return torch.cat(all_c, dim=0), torch.cat(all_t, dim=0)
+
 class RaySlabSampler(BaseSampler):
     """
     STRATEGY 2: VOLUMETRIC SLAB INTEGRATION
@@ -91,3 +103,20 @@ class RaySlabSampler(BaseSampler):
         
         targets = slice_2d[idx_h, idx_w].unsqueeze(-1)
         return coords, targets
+
+    def sample_multi(self, slices_with_metadata, rays_per_slice):
+        """Concatenate samples from K slices into one (coords, targets) pair.
+
+        Output shapes (with B = K * rays_per_slice rays):
+            coords:  [B * n_samples, 3]    — flat list of all sample points
+            targets: [B, 1]                — one ground-truth pixel per ray
+
+        The sample-points layout is preserved (each ray's n_samples points are
+        consecutive), so the trainer can still reshape to [B, n_samples] and
+        average across the slab dimension.
+        """
+        all_c, all_t = [], []
+        for slice_2d, meta in slices_with_metadata:
+            c, t = self.sample(slice_2d, meta, rays_per_slice)
+            all_c.append(c); all_t.append(t)
+        return torch.cat(all_c, dim=0), torch.cat(all_t, dim=0)
