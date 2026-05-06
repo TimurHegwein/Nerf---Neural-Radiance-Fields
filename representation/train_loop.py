@@ -106,6 +106,11 @@ def run_training(
             order = list(train_indices)
             np.random.shuffle(order)
 
+            # Each step processes K = slices_per_step slices in ONE forward/backward.
+            # The actual tensor concatenation (torch.cat over the K per-slice batches)
+            # lives in `RaySlabSampler.sample_multi` — see representation/sampler_def.py.
+            # Here we only build the Python list of (slice, metadata) tuples and pass
+            # it to the trainer; the sampler turns it into one (coords, targets) pair.
             epoch_train_loss, epoch_train_psnr, n_steps = 0.0, 0.0, 0
             for start in range(0, len(order), slices_per_step):
                 chunk = order[start : start + slices_per_step]
