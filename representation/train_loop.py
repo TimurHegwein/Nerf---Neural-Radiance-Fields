@@ -74,7 +74,7 @@ def run_training(
     cnt_treshold: int = 100,
     split_seed: int = 42,
     ckpt_every_n_epochs: int = 25,
-    slices_per_step: int = 10,
+    slices_per_step: int = 5,
 ) -> nn.Module:
     """
     Orchestrates the training and tracks the BEST model weights based on Validation.
